@@ -1,0 +1,14 @@
+# Archivos generados por el programa
+*.txt
+*.log
+*.pyc
+*.pyo
+__pycache__/
+
+# Carpetas con tus archivos descargados
+/storage/
+Musica/
+TikTok/
+
+# Configuración personal local
+.env
