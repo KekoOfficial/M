@@ -1,1 +1,9 @@
-.
+# Netscape HTTP Cookie File
+.instagram.com	TRUE	/	TRUE	1800000000	sessionid	ABC123xyz...
+.instagram.com	TRUE	/	TRUE	1800000000	csrftoken	DEF456uvw...
+.instagram.com	TRUE	/	TRUE	1800000000	ds_user_id	123456789
+```[[__LINK_ICON]](https://github.com/YuldShah/uptovipnew/blob/main/INSTAGRAM_SETUP.md?f_link_type=f_linkinlinenote&flow_extra=eyJpbmxpbmVfZGlzcGxheV9wb3NpdGlvbiI6MCwiZG9jX3Bvc2l0aW9uIjowLCJkb2NfaWQiOiIzYzM4MTc4NTY5MjcxYTAzLTdhNmRhZjdmNmVkMjM0MjQifQ%3D%3D "[__LINK_ICON]")
+
+---
+
+¿Quieres que te dé un comando rápido para probar directamente desde Termux sin entrar al menú?
