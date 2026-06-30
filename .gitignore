@@ -1,6 +1,11 @@
-# Archivos privados
+# Archivos de sesión y datos personales
 cookies_instagram.txt
 *.log
 estado_descarga.txt
+
+# Archivos generados por Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.env
