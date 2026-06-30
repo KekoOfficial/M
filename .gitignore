@@ -1,14 +1,6 @@
-# Archivos generados por el programa
-*.txt
+# Archivos privados
+cookies_instagram.txt
 *.log
-*.pyc
-*.pyo
+estado_descarga.txt
 __pycache__/
-
-# Carpetas con tus archivos descargados
-/storage/
-Musica/
-TikTok/
-
-# Configuración personal local
-.env
+*.pyc
