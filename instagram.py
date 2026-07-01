@@ -2,77 +2,112 @@ import yt_dlp
 import os
 import time
 import random
+import re
+import requests
+from urllib.parse import urlencode
 from config import (
     CARPETA_INSTAGRAM, CALIDAD_MP4, MAX_CONEXIONES,
-    ARCHIVO_COOKIES, REINTENTOS, ESPERA_ENTRE_PET, PAIS_GEOBYPASS
+    REINTENTOS, ESPERA_ENTRE_PET, PAIS_GEOBYPASS, ARCHIVO_ERRORES
 )
 from utils import actualizar_carpeta, escribir_error, limpiar_nombre
 
-# Lista de agentes para evitar bloqueos
+# ─────────────────────────────────────────────────────────────
+# ⚙️ CONFIGURACIÓN: MOTOR = sssinstagram.com/es
+# ─────────────────────────────────────────────────────────────
+MOTOR_URL = "https://sssinstagram.com/es"
+API_ENDPOINT = "https://sssinstagram.com/api/instagram"
+
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 13; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (Linux; Android 12; Redmi Note 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/132.0.0.0 Safari/537.36"
 ]
 
-# Configuración optimizada
-OPCIONES_INSTAGRAM = {
-    "format": CALIDAD_MP4,
-    "merge_output_format": "mp4",
+# Opciones finales de descarga MP4
+OPCIONES_DESCARGA = {
+    "format": "best[ext=mp4]/best",
     "outtmpl": f"{CARPETA_INSTAGRAM}/%(id)s_{limpiar_nombre('%(title)s')}.%(ext)s",
     "noplaylist": True,
     "quiet": False,
     "no_warnings": False,
     "overwrites": False,
-    "continuedl": True,
-    "concurrent_fragments": min(MAX_CONEXIONES, 4),
-    "buffersize": 2 * 1024 * 1024,
     "retries": REINTENTOS,
     "fragment_retries": REINTENTOS,
     "sleep_interval": ESPERA_ENTRE_PET,
-    "max_sleep_interval": ESPERA_ENTRE_PET * 3,
-    "random_sleep": True,
-    "geo_bypass": True,
-    "geo_bypass_country": PAIS_GEOBYPASS,
-    "extractor_args": {
-        "instagram": {
-            "api_version": "v24",
-            "include_ads": False,
-            "skip_extra_formats": True
-        }
-    },
     "http_headers": {
         "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/json,*/*;q=0.8",
-        "Accept-Language": "es-PY,es;q=0.9,en;q=0.8",
-        "Referer": "https://www.instagram.com/",
-        "Origin": "https://www.instagram.com"
+        "Referer": MOTOR_URL,
+        "Origin": "https://sssinstagram.com"
     }
 }
 
-# Cargar cookies si existen
-COOKIES_CARGADAS = False
-if os.path.isfile(ARCHIVO_COOKIES) and os.path.getsize(ARCHIVO_COOKIES) > 20:
-    OPCIONES_INSTAGRAM["cookiefile"] = ARCHIVO_COOKIES
-    COOKIES_CARGADAS = True
-    print("🍪 Cookies de Instagram cargadas correctamente")
-else:
-    print("ℹ️ Sin cookies: solo funcionarán perfiles públicos sin inicio de sesión")
+# ─────────────────────────────────────────────────────────────
+# 🛠️ FUNCIÓN: Extraer enlace directo vía sssinstagram.com
+# ─────────────────────────────────────────────────────────────
+def obtener_enlace_directo(enlace_ig: str) -> tuple[bool, str, dict]:
+    """Consulta el servicio sssinstagram para obtener el enlace MP4"""
+    try:
+        headers = {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Referer": MOTOR_URL,
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
 
+        payload = urlencode({"url": enlace_ig.strip()})
 
-def descargar_instagram(enlace):
+        resp = requests.post(
+            API_ENDPOINT,
+            data=payload,
+            headers=headers,
+            timeout=15
+        )
+        resp.raise_for_status()
+        datos = resp.json()
+
+        if datos.get("success") and datos.get("video"):
+            enlace_mp4 = datos["video"].get("url") or datos["video"].get("download")
+            titulo = datos.get("title", "Instagram_" + datos.get("id", "desconocido"))
+            return True, enlace_mp4, {"title": titulo, "id": datos.get("id", "")}
+
+        escribir_error(f"SSSInstagram: No devolvió enlace válido | {enlace_ig}")
+        return False, "", {}
+
+    except Exception as e:
+        escribir_error(f"SSSInstagram Error: {enlace_ig} | {str(e)[:80]}")
+        return False, "", {}
+
+# ─────────────────────────────────────────────────────────────
+# 📥 FUNCIÓN PRINCIPAL
+# ─────────────────────────────────────────────────────────────
+def descargar_instagram(enlace: str) -> tuple[bool, str]:
     intentos = 0
     max_intentos = 3
     enlace = enlace.strip()
 
+    # Validar formato Instagram
+    if not re.match(r"^https?://(www\.)?instagram\.com/(reel|p|tv)/", enlace):
+        return False, "❌ Enlace no es de Instagram válido"
+
     while intentos < max_intentos:
         try:
-            print("📸 Procesando Instagram...")
-            with yt_dlp.YoutubeDL(OPCIONES_INSTAGRAM) as ydl:
-                info = ydl.extract_info(enlace, download=True)
+            print(f"📸 Procesando Instagram vía SSSInstagram: {enlace[:65]}...")
+
+            ok, enlace_mp4, info = obtener_enlace_directo(enlace)
+            if not ok or not enlace_mp4:
+                intentos += 1
+                time.sleep(3 * intentos)
+                continue
+
+            # Ajustar nombre en opciones
+            opciones = OPCIONES_DESCARGA.copy()
+            opciones["outtmpl"] = opciones["outtmpl"] % info
+
+            # Descargar con yt-dlp desde el enlace directo
+            with yt_dlp.YoutubeDL(opciones) as ydl:
+                ydl.download([enlace_mp4])
 
             actualizar_carpeta(CARPETA_INSTAGRAM)
-            return True, f"✅ Instagram descargado: {info.get('title', 'Sin título')[:50]}"
+            return True, f"✅ Instagram descargado: {limpiar_nombre(info.get('title', ''))[:50]}"
 
         except Exception as e:
             intentos += 1
@@ -80,19 +115,11 @@ def descargar_instagram(enlace):
 
             if "already exists" in error:
                 return False, "⚠️ Ya existe, saltado"
-            elif "404" in error or "not found" in error:
-                return False, "❌ Video no existe o eliminado"
-            elif "empty media" in error or "login required" in error or "private" in error:
-                if COOKIES_CARGADAS:
-                    escribir_error(f"Instagram: Cookies vencidas | {enlace}")
-                    return False, "❌ Cookies vencidas: generá nuevas"
-                else:
-                    return False, "❌ Requiere inicio de sesión: agregá cookies"
 
-            escribir_error(f"Instagram error: {enlace} | {str(e)[:100]}")
+            escribir_error(f"Instagram Fallo: {enlace} | {str(e)[:100]}")
             if intentos < max_intentos:
-                time.sleep(3 * intentos)
+                time.sleep(4 * intentos)
                 continue
-            return False, f"❌ Error: {str(e)[:70]}"
+            return False, f"❌ Error final: {str(e)[:70]}"
 
     return False, "❌ Se agotaron los intentos"
