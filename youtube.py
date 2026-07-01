@@ -4,13 +4,15 @@ import time
 import random
 from config import (
     CARPETA_MUSICA, CALIDAD_MP3, MAX_CONEXIONES,
-    RETRIES_DESCARGA, ESPERA_ENTRE_PET, ARCHIVO_ERRORES
+    REINTENTOS, ESPERA_ENTRE_PET, PAIS_GEOBYPASS,
+    INCORPORAR_METADATOS, INCORPORAR_MINIATURA,
+    SALTAR_ERRORES_LISTAS, ARCHIVO_ERRORES
 )
-from utils import actualizar_carpeta, escribir_error
+from utils import actualizar_carpeta, escribir_error, limpiar_nombre
 from archivos import borrar_duplicados, registrar_descarga
 
 # ─────────────────────────────────────────────────────────────
-# 🎯 CONFIGURACIÓN AVANZADA ANTI-BLOQUEO
+# 🎯 CONFIGURACIÓN ANTI-BLOQUEO Y COMPATIBILIDAD
 # ─────────────────────────────────────────────────────────────
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Mobile Safari/537.36",
@@ -23,7 +25,7 @@ OPCIONES_YOUTUBE = {
     # Formato y calidad
     "format": "bestaudio[ext=m4a]/bestaudio/best",
     "format_sort": ["abr", "asr", "size", "br"],
-    "outtmpl": f"{CARPETA_MUSICA}/%(playlist_title|Sin Lista)s/%(artist|)s - %(title)s.%(ext)s",
+    "outtmpl": f"{CARPETA_MUSICA}/%(playlist_title|Sin Lista)s/%(artist|Desconocido)s - %(title)s.%(ext)s",
     "outtmpl_na_placeholder": "Desconocido",
 
     # Conversión a MP3
@@ -32,31 +34,32 @@ OPCIONES_YOUTUBE = {
         "preferredcodec": "mp3",
         "preferredquality": CALIDAD_MP3,
         "nopostoverwrites": False
-    }, {
-        "key": "EmbedThumbnail",
-        "already_have_thumbnail": False
-    }, {
-        "key": "FFmpegMetadata",
-        "add_metadata": True
     }],
 
-    # Miniatura
-    "writethumbnail": True,
-    "embedthumbnail": True,
+    # Miniatura y metadatos
+    "writethumbnail": INCORPORAR_MINIATURA,
+    "embedthumbnail": INCORPORAR_MINIATURA,
+    "addmetadata": INCORPORAR_METADATOS,
+    "postprocessor_args": {
+        "FFmpegMetadata": ["-id3v2_version", "3"],
+        "EmbedThumbnail": ["-metadata", "comment=Descargado con Dola Downloader"]
+    },
 
     # Comportamiento
     "noplaylist": False,
     "extract_flat": False,
     "skip_unavailable_fragments": True,
-    "ignoreerrors": True,          # ⚠️ Salta errores en listas y sigue
+    "ignoreerrors": SALTAR_ERRORES_LISTAS,
     "overwrites": False,
     "continuedl": True,
+    "force_generic_extractor": False,  # ✅ Evita que use extractor genérico
+    "check_formats": True,
 
     # Rendimiento y anti-bloqueo
     "concurrent_fragments": min(MAX_CONEXIONES, 6),
     "buffersize": 4 * 1024 * 1024,
-    "retries": RETRIES_DESCARGA,
-    "fragment_retries": RETRIES_DESCARGA,
+    "retries": REINTENTOS,
+    "fragment_retries": REINTENTOS,
     "retry_sleep_functions": {"http": lambda n: ESPERA_ENTRE_PET * (1.5 ** n)},
     "sleep_interval": ESPERA_ENTRE_PET,
     "max_sleep_interval": ESPERA_ENTRE_PET * 3,
@@ -74,7 +77,7 @@ OPCIONES_YOUTUBE = {
         }
     },
 
-    # Cabeceras dinámicas
+    # Cabeceras seguras
     "http_headers": {
         "User-Agent": random.choice(USER_AGENTS),
         "Accept": "text/html,application/json,*/*;q=0.8",
@@ -89,21 +92,33 @@ OPCIONES_YOUTUBE = {
 }
 
 # ─────────────────────────────────────────────────────────────
-# 🛠️ FUNCIONES AUXILIARES
+# 🛠️ FUNCIONES AUXILIARES CORREGIDAS
 # ─────────────────────────────────────────────────────────────
 def normalizar_enlace(enlace: str) -> str:
-    """Convierte enlaces de YouTube Music, acorta y limpia"""
-    enlace = enlace.strip().split("&pp=")[0].split("?list=")[0]
+    """✅ Convierte enlaces y NO rompe listas ni parámetros importantes"""
+    enlace = enlace.strip()
+
+    # Convertir YouTube Music a YouTube normal
     if "music.youtube.com" in enlace:
         enlace = enlace.replace("music.youtube.com", "www.youtube.com")
         print("🔄 Convertido: YouTube Music → YouTube")
-    return enlace
+
+    # Solo quitar parámetros que no afectan el funcionamiento
+    partes = enlace.split("&")
+    partes_limpias = []
+    for p in partes:
+        if not p.startswith(("pp=", "feature=", "si=")) or "list=" in p:
+            partes_limpias.append(p)
+
+    enlace_limpio = "&".join(partes_limpias)
+    return enlace_limpio
 
 def es_lista(enlace: str) -> bool:
+    """✅ Detecta correctamente si es una lista de reproducción"""
     return any(x in enlace for x in ["list=", "/playlist", "playlist?"])
 
 def actualizar_agentes():
-    """Cambia User-Agent después de cada error para evitar bloqueos"""
+    """Cambia User-Agent para evitar bloqueos"""
     OPCIONES_YOUTUBE["http_headers"]["User-Agent"] = random.choice(USER_AGENTS)
 
 # ─────────────────────────────────────────────────────────────
@@ -115,24 +130,29 @@ def descargar_youtube(enlace: str) -> tuple[bool, str]:
     enlace_ok = normalizar_enlace(enlace)
     es_una_lista = es_lista(enlace_ok)
 
+    # Verificación básica del enlace
+    if not enlace_ok.startswith(("https://", "http://")):
+        return False, "❌ Enlace inválido"
+
     while intentos < max_intentos:
         try:
             tipo = "LISTA DE REPRODUCCIÓN" if es_una_lista else "VIDEO / CANCIÓN"
-            print(f"🎵 Procesando YouTube {tipo}: {enlace_ok[:70]}...")
+            print(f"🎵 Procesando YouTube {tipo}: {enlace_ok[:75]}...")
 
             with yt_dlp.YoutubeDL(OPCIONES_YOUTUBE) as ydl:
                 info = ydl.extract_info(enlace_ok, download=True)
 
-            # Procesamiento post-descarga
+            # Procesamiento final
             borrar_duplicados()
             actualizar_carpeta(CARPETA_MUSICA)
             registrar_descarga("youtube", info)
 
-            # Resumen
+            # Mensaje de resultado
             if info and info.get("_type") == "playlist":
-                exitosas = sum(1 for e in info.get("entries", []) if e and e.get("filepath"))
-                total = len(info.get("entries", []))
-                mensaje = f"✅ Lista finalizada: {exitosas}/{total} canciones descargadas"
+                entradas = info.get("entries", [])
+                exitosas = sum(1 for e in entradas if e and e.get("filepath"))
+                total = len(entradas)
+                mensaje = f"✅ Lista completada: {exitosas}/{total} canciones descargadas"
             else:
                 titulo = info.get("title", "Sin título") if info else "Desconocido"
                 mensaje = f"✅ Descargado: {titulo[:60]}"
@@ -156,13 +176,17 @@ def descargar_youtube(enlace: str) -> tuple[bool, str]:
                     continue
                 return False, "❌ Bloqueo 403: Esperá 10min y actualizá yt-dlp"
 
+            elif "404" in error or "not found" in error:
+                escribir_error(f"YouTube 404: {enlace}")
+                return False, "❌ Enlace no válido o contenido eliminado"
+
             elif "private" in error or "unavailable" in error:
                 escribir_error(f"YouTube privado/no disponible: {enlace}")
                 return False, "❌ Video privado o no disponible"
 
             elif "playlist" in error or "tab page" in error:
                 escribir_error(f"YouTube error lista: {enlace}")
-                return False, "❌ No se pudo leer lista | Actualizá yt-dlp"
+                return False, "❌ No se pudo leer la lista | Probá actualizar yt-dlp"
 
             escribir_error(f"YouTube error: {enlace} | {str(e)[:150]}")
             if intentos < max_intentos:
@@ -170,4 +194,4 @@ def descargar_youtube(enlace: str) -> tuple[bool, str]:
                 continue
             return False, f"❌ Fallo final: {str(e)[:70]}"
 
-    return False, "❌ Se agotaron los intentos"
+    return False, "❌ Se agotaron los intentos de descarga"
